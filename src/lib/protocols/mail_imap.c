@@ -1,8 +1,7 @@
 /*
  * mail_imap.c
  *
- * Copyright (C) 2009-2011 by ipoque GmbH
- * Copyright (C) 2011-15 - ntop.org
+ * Copyright (C) 2016 - ntop.org
  *
  * This file is part of nDPI, an open source deep packet inspection
  * library based on the OpenDPI and PACE technology by ipoque GmbH
@@ -23,9 +22,14 @@
  */
 
 
-#include "ndpi_protocols.h"
+#include "ndpi_protocol_ids.h"
 
 #ifdef NDPI_PROTOCOL_MAIL_IMAP
+
+#define NDPI_CURRENT_PROTO NDPI_PROTOCOL_MAIL_IMAP
+
+#include "ndpi_api.h"
+
 
 static void ndpi_int_mail_imap_add_connection(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow)
 {
@@ -41,7 +45,16 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
   u_int8_t saw_command = 0;
   /* const u_int8_t *command = 0; */
 
-  NDPI_LOG(NDPI_PROTOCOL_MAIL_IMAP, ndpi_struct, NDPI_LOG_DEBUG, "search IMAP.\n");
+  NDPI_LOG_DBG(ndpi_struct, "search IMAP_IMAP\n");
+  
+  if (flow->l4.tcp.mail_imap_starttls == 2) {
+#ifdef NDPI_PROTOCOL_SSL
+    NDPI_LOG_DBG2(ndpi_struct, "starttls detected\n");
+    NDPI_ADD_PROTOCOL_TO_BITMASK(flow->excluded_protocol_bitmask, NDPI_PROTOCOL_MAIL_IMAP);
+    NDPI_DEL_PROTOCOL_FROM_BITMASK(flow->excluded_protocol_bitmask, NDPI_PROTOCOL_SSL);
+    return;
+#endif
+  }
 
   if (packet->payload_packet_len >= 4 && ntohs(get_u_int16_t(packet->payload, packet->payload_packet_len - 2)) == 0x0d0a) {
     // the DONE command appears without a tag
@@ -62,7 +75,7 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
 	  }
 	  if (!((packet->payload[i] >= 'a' && packet->payload[i] <= 'z') ||
 		(packet->payload[i] >= 'A' && packet->payload[i] <= 'Z') ||
-		(packet->payload[i] >= '0' && packet->payload[i] <= '9') || packet->payload[i] == '*')) {
+		(packet->payload[i] >= '0' && packet->payload[i] <= '9') || packet->payload[i] == '*' || packet->payload[i] == '.')) {
 	    goto imap_excluded;
 	  }
 	  i++;
@@ -99,6 +112,8 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
 	    && (packet->payload[command_start + 1] == 'K' || packet->payload[command_start + 1] == 'k')
 	    && packet->payload[command_start + 2] == ' ') {
 	  flow->l4.tcp.mail_imap_stage += 1;
+	  if (flow->l4.tcp.mail_imap_starttls == 1)
+	    flow->l4.tcp.mail_imap_starttls = 2;
 	  saw_command = 1;
 	} else if ((packet->payload[command_start] == 'U' || packet->payload[command_start] == 'u')
 		   && (packet->payload[command_start + 1] == 'I' || packet->payload[command_start + 1] == 'i')
@@ -131,8 +146,10 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
 	    && (packet->payload[command_start + 5] == 'T' || packet->payload[command_start + 5] == 't')
 	    && (packet->payload[command_start + 6] == 'L' || packet->payload[command_start + 6] == 'l')
 	    && (packet->payload[command_start + 7] == 'S' || packet->payload[command_start + 7] == 's')) {
-	  flow->l4.tcp.mail_imap_stage += 1;
-	  saw_command = 1;
+        flow->l4.tcp.mail_imap_stage += 1;
+        flow->l4.tcp.mail_imap_starttls = 1;
+        flow->detected_protocol_stack[0] = NDPI_PROTOCOL_MAIL_IMAPS;
+        saw_command = 1;
 	}
       }
       if ((command_start + 5) < packet->payload_packet_len) {
@@ -263,7 +280,7 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
 
     if (saw_command == 1) {
       if (flow->l4.tcp.mail_imap_stage == 3 || flow->l4.tcp.mail_imap_stage == 5) {
-	NDPI_LOG(NDPI_PROTOCOL_MAIL_IMAP, ndpi_struct, NDPI_LOG_DEBUG, "mail imap identified\n");
+	NDPI_LOG_INFO(ndpi_struct, "found MAIL_IMAP\n");
 	ndpi_int_mail_imap_add_connection(ndpi_struct, flow);
 	return;
       }
@@ -271,7 +288,7 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
   }
 
   if (packet->payload_packet_len > 1 && packet->payload[packet->payload_packet_len - 1] == ' ') {
-    NDPI_LOG(NDPI_PROTOCOL_MAIL_IMAP, ndpi_struct, NDPI_LOG_DEBUG,
+    NDPI_LOG_DBG2(ndpi_struct,
 	     "maybe a split imap command -> need next packet and imap_stage is set to 4.\n");
     flow->l4.tcp.mail_imap_stage = 4;
     return;
@@ -283,13 +300,12 @@ void ndpi_search_mail_imap_tcp(struct ndpi_detection_module_struct *ndpi_struct,
   // if the packet count is low enough and at least one command or response was seen before
   if ((packet->payload_packet_len >= 2 && ntohs(get_u_int16_t(packet->payload, packet->payload_packet_len - 2)) == 0x0d0a)
       && flow->packet_counter < 6 && flow->l4.tcp.mail_imap_stage >= 1) {
-    NDPI_LOG(NDPI_PROTOCOL_MAIL_IMAP, ndpi_struct, NDPI_LOG_DEBUG,
+    NDPI_LOG_DBG2(ndpi_struct,
 	     "no imap command or response but packet count < 6 and imap stage >= 1 -> skip\n");
     return;
   }
 
-  NDPI_LOG(NDPI_PROTOCOL_MAIL_IMAP, ndpi_struct, NDPI_LOG_DEBUG, "exclude IMAP.\n");
-  NDPI_ADD_PROTOCOL_TO_BITMASK(flow->excluded_protocol_bitmask, NDPI_PROTOCOL_MAIL_IMAP);
+  NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
 }
 
 

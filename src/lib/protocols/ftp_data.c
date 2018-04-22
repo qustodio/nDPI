@@ -1,8 +1,7 @@
 /*
  * ftp_data.c
  *
- * Copyright (C) 2014 Tomasz Bujlow <tomasz@skatnet.dk>
- * Copyright (C) 2014 - ntop.org
+ * Copyright (C) 2016 - ntop.org
  * 
  * The signature is based on the Libprotoident library.
  *
@@ -24,9 +23,14 @@
  * 
  */
 
-#include "ndpi_api.h"
+#include "ndpi_protocol_ids.h"
 
 #ifdef NDPI_PROTOCOL_FTP_DATA
+
+#define NDPI_CURRENT_PROTO NDPI_PROTOCOL_FTP_DATA
+
+#include "ndpi_api.h"
+
 static void ndpi_int_ftp_data_add_connection(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow) {
   ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_FTP_DATA, NDPI_PROTOCOL_UNKNOWN);
 }
@@ -34,12 +38,13 @@ static void ndpi_int_ftp_data_add_connection(struct ndpi_detection_module_struct
 static int ndpi_match_ftp_data_port(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow) {
   struct ndpi_packet_struct *packet = &flow->packet;
 
-  if(packet->tcp->dest == htons(20) || packet->tcp->source == htons(20)) {
-    return 1;
+  /* Check connection over TCP */
+  if(packet->tcp) {
+    if(packet->tcp->dest == htons(20) || packet->tcp->source == htons(20)) {
+      return 1;
+    }
   }
-
   return 0;
-
 }
 
 static int ndpi_match_ftp_data_directory(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow) {
@@ -60,13 +65,14 @@ static int ndpi_match_ftp_data_directory(struct ndpi_detection_module_struct *nd
 
 static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow) {
   struct ndpi_packet_struct *packet = &flow->packet;
+  u_int32_t payload_len = packet->payload_packet_len;
 
-  /* A FTP packet is pretty long so 256 is a bit consrvative but it should be OK */
+  /* A FTP packet is pretty long so 256 is a bit conservative but it should be OK */
   if(packet->payload_packet_len < 256)
     return 0;
 
   /* RIFF is a meta-format for storing AVI and WAV files */
-  if(match_first_bytes(packet->payload, "RIFF"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "RIFF"))
     return 1;
 
   /* MZ is a .exe file */
@@ -74,7 +80,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* Ogg files */
-  if(match_first_bytes(packet->payload, "OggS"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "OggS"))
     return 1;
 
   /* ZIP files */
@@ -86,7 +92,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* RAR files */
-  if(match_first_bytes(packet->payload, "Rar!"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "Rar!"))
     return 1;
 
   /* EBML */
@@ -98,7 +104,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* GIF */
-  if(match_first_bytes(packet->payload, "GIF8"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "GIF8"))
     return 1;
 
   /* PHP scripts */
@@ -110,7 +116,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* PDFs */
-  if(match_first_bytes(packet->payload, "%PDF"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "%PDF"))
     return 1;
 
   /* PNG */
@@ -118,7 +124,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* HTML */
-  if(match_first_bytes(packet->payload, "<htm"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "<htm"))
     return 1;
   if((packet->payload[0] == 0x0a) && (packet->payload[1] == '<') && (packet->payload[2] == '!') && (packet->payload[3] == 'D'))
     return 1;
@@ -132,17 +138,17 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* XML */
-  if(match_first_bytes(packet->payload, "<!DO"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "<!DO"))
     return 1;
 
   /* FLAC */
-  if(match_first_bytes(packet->payload, "fLaC"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "fLaC"))
     return 1;
 
   /* MP3 */
   if((packet->payload[0] == 'I') && (packet->payload[1] == 'D') && (packet->payload[2] == '3') && (packet->payload[3] == 0x03))
     return 1;
-  if(match_first_bytes(packet->payload, "\xff\xfb\x90\xc0"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "\xff\xfb\x90\xc0"))
     return 1;
 
   /* RPM */
@@ -150,7 +156,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* Wz Patch */
-  if(match_first_bytes(packet->payload, "WzPa"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "WzPa"))
     return 1;
 
   /* Flash Video */
@@ -158,7 +164,7 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* .BKF (Microsoft Tape Format) */
-  if(match_first_bytes(packet->payload, "TAPE"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "TAPE"))
     return 1;
 
   /* MS Office Doc file - this is unpleasantly geeky */
@@ -174,23 +180,23 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
 
   /* ar archive, typically .deb files */
-  if(match_first_bytes(packet->payload, "!<ar"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "!<ar"))
     return 1;
 
   /* Raw XML (skip jabber-like traffic as this is not FTP but unencrypted jabber) */
-  if((match_first_bytes(packet->payload, "<?xm"))
+  if((ndpi_match_strprefix(packet->payload, payload_len, "<?xm"))
      && (ndpi_strnstr((const char *)packet->payload, "jabber", packet->payload_packet_len) == NULL))
     return 1;
 
-  if(match_first_bytes(packet->payload, "<iq "))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "<iq "))
     return 1;
 
   /* SPF */
-  if(match_first_bytes(packet->payload, "SPFI"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "SPFI"))
     return 1;
 
   /* ABIF - Applied Biosystems */
-  if(match_first_bytes(packet->payload, "ABIF"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, "ABIF"))
     return 1;
 
   /* bzip2 - other digits are also possible instead of 9 */
@@ -203,11 +209,11 @@ static int ndpi_match_file_header(struct ndpi_detection_module_struct *ndpi_stru
     return 1;
   if((packet->payload[0] == '<') && (packet->payload[1] == 'C') && (packet->payload[2] == 'F'))
     return 1;
-  if(match_first_bytes(packet->payload, ".tem"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, ".tem"))
     return 1;
-  if(match_first_bytes(packet->payload, ".ite"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, ".ite"))
     return 1;
-  if(match_first_bytes(packet->payload, ".lef"))
+  if(ndpi_match_strprefix(packet->payload, payload_len, ".lef"))
     return 1;
 
   return 0;
@@ -222,23 +228,21 @@ static void ndpi_check_ftp_data(struct ndpi_detection_module_struct *ndpi_struct
 	 || ndpi_match_ftp_data_port(ndpi_struct, flow)
 	 )
      ) {
-    NDPI_LOG(NDPI_PROTOCOL_FTP_DATA, ndpi_struct, NDPI_LOG_DEBUG, "Possible FTP_DATA request detected...\n");
+    NDPI_LOG_INFO(ndpi_struct, "found FTP_DATA request\n");
     ndpi_int_ftp_data_add_connection(ndpi_struct, flow);
   } else
-    NDPI_ADD_PROTOCOL_TO_BITMASK(flow->excluded_protocol_bitmask, NDPI_PROTOCOL_FTP_DATA);  
+    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
 }
 
 void ndpi_search_ftp_data(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow) {
-  struct ndpi_packet_struct *packet = &flow->packet;
 	
   /* Break after 20 packets. */
   if(flow->packet_counter > 20) {
-    NDPI_LOG(NDPI_PROTOCOL_FTP_DATA, ndpi_struct, NDPI_LOG_DEBUG, "Exclude FTP_DATA.\n");
-    NDPI_ADD_PROTOCOL_TO_BITMASK(flow->excluded_protocol_bitmask, NDPI_PROTOCOL_FTP_DATA);
+    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
     return;
   }
 
-  NDPI_LOG(NDPI_PROTOCOL_FTP_DATA, ndpi_struct, NDPI_LOG_DEBUG, "FTP_DATA detection...\n");
+  NDPI_LOG_DBG(ndpi_struct, "search FTP_DATA\n");
   ndpi_check_ftp_data(ndpi_struct, flow);
 }
 
