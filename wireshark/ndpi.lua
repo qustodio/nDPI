@@ -1,5 +1,5 @@
 --
--- (C) 2017 - ntop.org
+-- (C) 2017-18 - ntop.org
 --
 -- This plugin is part of nDPI (https://github.com/ntop/nDPI)
 --
@@ -18,7 +18,11 @@
 -- Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 --
 
-local ndpi_proto = Proto("ndpi", "nDPI", "nDPI Protocol Interpreter")
+-- wireshark ~/Dropbox/discovery/Daniele/alexa_sonos_only.pcap
+-- cat /tmp/wireshark.sql | influx -database wireshark
+
+
+local ndpi_proto = Proto("ndpi", "nDPI Protocol Interpreter")
 ndpi_proto.fields = {}
 
 local ndpi_fds    = ndpi_proto.fields
@@ -26,7 +30,7 @@ ndpi_fds.network_protocol     = ProtoField.new("nDPI Network Protocol", "ndpi.pr
 ndpi_fds.application_protocol = ProtoField.new("nDPI Application Protocol", "ndpi.protocol.application", ftypes.UINT8, nil, base.DEC)
 ndpi_fds.name                 = ProtoField.new("nDPI Protocol Name", "ndpi.protocol.name", ftypes.STRING)
 
-local ntop_proto = Proto("ntop", "ntop", "ntop Extensions")
+local ntop_proto = Proto("ntop", "ntop Extensions")
 ntop_proto.fields = {}
 
 local ntop_fds = ntop_proto.fields
@@ -47,7 +51,7 @@ local f_udp_len           = Field.new("udp.length")
 local f_tcp_header_len    = Field.new("tcp.hdr_len")
 local f_ip_len            = Field.new("ip.len")
 local f_ip_hdr_len        = Field.new("ip.hdr_len")
-local f_ssl_server_name   = Field.new("ssl.handshake.extensions_server_name")
+local f_tls_server_name   = Field.new("tls.handshake.extensions_server_name")
 local f_tcp_flags         = Field.new('tcp.flags')
 local f_tcp_retrans       = Field.new('tcp.analysis.retransmission')
 local f_tcp_ooo           = Field.new('tcp.analysis.out_of_order')
@@ -55,7 +59,7 @@ local f_tcp_lost_segment  = Field.new('tcp.analysis.lost_segment') -- packet dro
 local f_rpc_xid           = Field.new('rpc.xid')
 local f_rpc_msgtyp        = Field.new('rpc.msgtyp')
 local f_user_agent        = Field.new('http.user_agent')
-local f_dhcp_request_item = Field.new('bootp.option.request_list_item')
+local f_dhcp_request_item = Field.new('dhcp.option.request_list_item')
 
 local ndpi_protos            = {}
 local ndpi_flows             = {}
@@ -84,11 +88,14 @@ local max_num_flows          = 50
 local num_top_dns_queries    = 0
 local max_num_dns_queries    = 50
 
-local ssl_server_names       = {}
-local tot_ssl_flows          = 0
+local tls_server_names       = {}
+local tot_tls_flows          = 0
 
 local http_ua                = {}
 local tot_http_ua_flows      = 0
+
+local flows                  = {}
+local tot_flows              = 0
 
 local dhcp_fingerprints      = {}
 
@@ -109,6 +116,11 @@ local last_processed_packet_number = 0
 local max_latency_discard    = 5000  -- 5 sec
 local max_appl_lat_discard   = 15000 -- 15 sec
 local debug                  = false
+
+local dump_timeseries = false
+
+local dump_file = "/tmp/wireshark-influx.txt"
+local file
 
 -- ##############################################
 
@@ -317,14 +329,18 @@ function ndpi_proto.init()
    syn                    = {}
    synack                 = {}
 
-   -- SSL
-   ssl_server_names       = {}
-   tot_ssl_flows          = 0
+   -- TLS
+   tls_server_names       = {}
+   tot_tls_flows          = 0
    
    -- HTTP
    http_ua                = {}
    tot_http_ua_flows      = 0
 
+   -- Flows
+   flows                  = {}
+   tot_flows              = 0
+   
    -- DHCP
    dhcp_fingerprints      = {}
    
@@ -362,6 +378,12 @@ function ndpi_proto.init()
 
    -- RPC
    rpc_ts                = {}   
+
+   if(dump_timeseries) then
+      file = assert(io.open(dump_file, "a"))
+      print("Writing to "..dump_file.."\n")
+      print('Load data with:\ncurl -i -XPOST "http://localhost:8086/write?db=wireshark" --data-binary @/tmp/wireshark-influx.txt\n')
+   end
 end
 
 function slen(str)
@@ -500,17 +522,17 @@ end
 
 -- ###############################################
 
-function ssl_dissector(tvb, pinfo, tree)
-   local ssl_server_name = f_ssl_server_name()
-   if(ssl_server_name ~= nil) then
-      ssl_server_name = getval(ssl_server_name)
+function tls_dissector(tvb, pinfo, tree)
+   local tls_server_name = f_tls_server_name()
+   if(tls_server_name ~= nil) then
+      tls_server_name = getval(tls_server_name)
 
-      if(ssl_server_names[ssl_server_name] == nil) then
-	 ssl_server_names[ssl_server_name] = 0
+      if(tls_server_names[tls_server_name] == nil) then
+	 tls_server_names[tls_server_name] = 0
       end
 
-      ssl_server_names[ssl_server_name] = ssl_server_names[ssl_server_name] + 1
-      tot_ssl_flows = tot_ssl_flows + 1
+      tls_server_names[tls_server_name] = tls_server_names[tls_server_name] + 1
+      tot_tls_flows = tot_tls_flows + 1
    end
 end
 
@@ -532,6 +554,55 @@ function http_dissector(tvb, pinfo, tree)
 	 http_ua[user_agent][srckey] = 1
 	 -- io.write("Adding ["..user_agent.."] @ "..srckey.."\n")
       end
+   end
+end
+
+-- ###############################################
+
+function timeseries_dissector(tvb, pinfo, tree)
+   if(pinfo.dst_port ~= 0) then
+      local rev_key = getstring(pinfo.dst)..":"..getstring(pinfo.dst_port).."-"..getstring(pinfo.src)..":"..getstring(pinfo.src_port)
+      local k
+            
+      if(flows[rev_key] ~= nil) then
+	 flows[rev_key][2] = flows[rev_key][2] + pinfo.len
+	 k = rev_key
+      else
+	 local key = getstring(pinfo.src)..":"..getstring(pinfo.src_port).."-"..getstring(pinfo.dst)..":"..getstring(pinfo.dst_port)
+	 
+	 k = key
+	 if(flows[key] == nil) then
+	    flows[key] = { pinfo.len, 0 } -- src -> dst  / dst -> src
+	    tot_flows = tot_flows + 1
+	 else
+	    flows[key][1] = flows[key][1] + pinfo.len
+	 end
+      end
+      
+      --k = pinfo.curr_proto..","..k
+      
+      local bytes = flows[k][1]+flows[k][2]
+      local row
+
+      -- Prometheus
+      -- row = "wireshark {metric=\"bytes\", flow=\""..k.."\"} ".. bytes .. " ".. (tonumber(pinfo.abs_ts)*10000).."00000"
+
+      -- Influx      
+      row = "wireshark,flow="..k.." bytes=".. pinfo.len .. " ".. (tonumber(pinfo.abs_ts)*10000).."00000"   
+      file:write(row.."\n")
+
+      row = "wireshark,ndpi="..ndpi.protocol_name.." bytes=".. pinfo.len .. " ".. (tonumber(pinfo.abs_ts)*10000).."00000"   
+      file:write(row.."\n")
+
+      row = "wireshark,host="..getstring(pinfo.src).." sent=".. pinfo.len .. " ".. (tonumber(pinfo.abs_ts)*10000).."00000"   
+      file:write(row.."\n")
+
+      row = "wireshark,host="..getstring(pinfo.dst).." rcvd=".. pinfo.len .. " ".. (tonumber(pinfo.abs_ts)*10000).."00000"   
+      file:write(row.."\n")
+   
+      -- print(row)
+
+      file:flush()
    end
 end
 
@@ -906,16 +977,19 @@ function ndpi_proto.dissector(tvb, pinfo, tree)
 
    -- print(num_pkts .. " / " .. pinfo.number .. " / " .. last_processed_packet_number)
 
-   if(false) then
+   if(true) then
       local srckey = tostring(pinfo.src)
       local dstkey = tostring(pinfo.dst)
-      print("Processing packet "..pinfo.number .. "["..srckey.." / "..dstkey.."]")
+      --print("Processing packet "..pinfo.number .. "["..srckey.." / "..dstkey.."]")
    end
 
+   if(dump_timeseries) then
+      timeseries_dissector(tvb, pinfo, tree)
+   end
    mac_dissector(tvb, pinfo, tree)
    arp_dissector(tvb, pinfo, tree)
    vlan_dissector(tvb, pinfo, tree)
-   ssl_dissector(tvb, pinfo, tree)
+   tls_dissector(tvb, pinfo, tree)
    http_dissector(tvb, pinfo, tree)
    dhcp_dissector(tvb, pinfo, tree)   
    dns_dissector(tvb, pinfo, tree)
@@ -1229,6 +1303,30 @@ end
 
 -- ###############################################
 
+local function flows_ua_dialog_menu()
+   local win = TextWindow.new("Flows");
+   local label = ""
+   local tot = 0
+   local i
+
+   if(tot_flows > 0) then
+      i = 0
+      label = label .. "Flow\t\t\t\t\tA->B\tB->A\n"
+      for k,v in pairsByKeys(flows, rev) do
+	 label = label .. k.."\t"..v[1].."\t"..v[2].."\n"
+	 --label = label .. k.."\n"
+	 if(i == 50) then break else i = i + 1 end
+      end
+   else
+      label = "No flows detected"
+   end
+
+   win:set(label)
+   win:add_button("Clear", function() win:clear() end)
+end
+
+-- ###############################################
+
 local function dhcp_dialog_menu()
    local win = TextWindow.new("DHCP Fingerprinting");
    local label = ""
@@ -1294,25 +1392,25 @@ end
 
 -- ###############################################
 
-local function ssl_dialog_menu()
-   local win = TextWindow.new("SSL Server Contacts");
+local function tls_dialog_menu()
+   local win = TextWindow.new("TLS Server Contacts");
    local label = ""
    local tot = 0
    local i
 
-   if(tot_ssl_flows > 0) then
+   if(tot_tls_flows > 0) then
       i = 0
-      label = label .. "SSL Server\t\t\t\t# Flows\n"
-      for k,v in pairsByValues(ssl_server_names, rev) do
+      label = label .. "TLS Server\t\t\t\t# Flows\n"
+      for k,v in pairsByValues(tls_server_names, rev) do
 	 local pctg
 
 	 v = tonumber(v)
-	 pctg = formatPctg((v * 100) / tot_ssl_flows)
+	 pctg = formatPctg((v * 100) / tot_tls_flows)
 	 label = label .. string.format("%-32s", shortenString(k,32)).."\t"..v.." [".. pctg.." %]\n"
 	 if(i == 50) then break else i = i + 1 end
       end
    else
-      label = "No SSL server certificates detected"
+      label = "No TLS server certificates detected"
    end
 
    win:set(label)
@@ -1365,8 +1463,9 @@ register_menu("ntop/ARP",          arp_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/DHCP",         dhcp_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/DNS",          dns_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/HTTP UA",      http_ua_dialog_menu, MENU_TOOLS_UNSORTED)
+register_menu("ntop/Flows",        flows_ua_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/IP-MAC",       ip_mac_dialog_menu, MENU_TOOLS_UNSORTED)
-register_menu("ntop/SSL",          ssl_dialog_menu, MENU_TOOLS_UNSORTED)
+register_menu("ntop/TLS",          tls_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/TCP Analysis", tcp_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/VLAN",         vlan_dialog_menu, MENU_TOOLS_UNSORTED)
 register_menu("ntop/Latency/Network",      rtt_dialog_menu, MENU_TOOLS_UNSORTED)

@@ -231,11 +231,11 @@
 # define NDPI_LOG_DBG(...) {}
 # define NDPI_LOG_DBG2(...) {}
 # else
-# define NDPI_LOG(proto, mod, log_level, args...) {}
-# define NDPI_LOG_ERR(mod, args...) {}
-# define NDPI_LOG_INFO(mod, args...) {}
-# define NDPI_LOG_DBG(mod,  args...) {}
-# define NDPI_LOG_DBG2(mod, args...) {}
+# define NDPI_LOG(proto, mod, log_level, args...) { /* printf(args); */ }
+# define NDPI_LOG_ERR(mod, args...)  { printf(args); }
+# define NDPI_LOG_INFO(mod, args...) { /* printf(args); */ }
+# define NDPI_LOG_DBG(mod,  args...) { /* printf(args); */ }
+# define NDPI_LOG_DBG2(mod, args...) { /* printf(args); */ }
 # endif
 #endif							/* NDPI_ENABLE_DEBUG_MESSAGES */
 
@@ -250,7 +250,7 @@
 
 /** macro to compare 2 IPv6 addresses with each other to identify the "smaller" IPv6 address  */
 #define NDPI_COMPARE_IPV6_ADDRESS_STRUCTS(x,y)  \
-  ((((u_int64_t *)(x))[0]) < (((u_int64_t *)(y))[0]) || ( (((u_int64_t *)(x))[0]) == (((u_int64_t *)(y))[0]) && (((u_int64_t *)(x))[1]) < (((u_int64_t *)(y))[1])) )
+  ((x.u6_addr.u6_addr64[0] < y.u6_addr.u6_addr64[0]) || ((x.u6_addr.u6_addr64[0] == y.u6_addr.u6_addr64[0]) && (x.u6_addr.u6_addr64[1] < y.u6_addr.u6_addr64[1])))
 
 #define NDPI_NUM_BITS              512
 
@@ -332,9 +332,36 @@
 #endif
 
 #define NDPI_MAX_DNS_REQUESTS                   16
+#define NDPI_MIN_NUM_STUN_DETECTION             8
 
 #define NDPI_MAJOR                              @NDPI_MAJOR@
 #define NDPI_MINOR                              @NDPI_MINOR@
 #define NDPI_PATCH                              @NDPI_PATCH@
+
+/* IMPORTANT: order according to its severity */
+#define NDPI_CIPHER_SAFE                        0
+#define NDPI_CIPHER_WEAK                        1
+#define NDPI_CIPHER_INSECURE                    2
+
+#ifdef __APPLE__
+
+#include <libkern/OSByteOrder.h>
+
+#define htobe16(x) OSSwapHostToBigInt16(x)
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define be16toh(x) OSSwapBigToHostInt16(x)
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+
+#define htobe32(x) OSSwapHostToBigInt32(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define be32toh(x) OSSwapBigToHostInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define htole64(x) OSSwapHostToLittleInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#define le64toh(x) OSSwapLittleToHostInt64(x)
+
+#endif /* __APPLE__ */
 
 #endif /* __NDPI_DEFINE_INCLUDE_FILE__ */

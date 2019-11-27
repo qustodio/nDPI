@@ -2,7 +2,7 @@
  * irc.c
  *
  * Copyright (C) 2009-2011 by ipoque GmbH
- * Copyright (C) 2011-15 - ntop.org
+ * Copyright (C) 2011-19 - ntop.org
  *
  * This file is part of nDPI, an open source deep packet inspection
  * library based on the OpenDPI and PACE technology by ipoque GmbH
@@ -24,8 +24,6 @@
 
 
 #include "ndpi_protocol_ids.h"
-
-#ifdef NDPI_PROTOCOL_IRC
 
 #define NDPI_CURRENT_PROTO NDPI_PROTOCOL_IRC
 
@@ -494,6 +492,7 @@ void ndpi_search_irc_tcp(struct ndpi_detection_module_struct *ndpi_struct, struc
 	  ndpi_parse_packet_line_info(ndpi_struct, flow);
 	} else {
 	  flow->l4.tcp.irc_3a_counter++;
+	  packet->parsed_lines = 0;
 	}
 	for (i = 0; i < packet->parsed_lines; i++) {
 	  if (packet->line[i].ptr[0] == ':') {
@@ -778,8 +777,8 @@ void ndpi_search_irc_tcp(struct ndpi_detection_module_struct *ndpi_struct, struc
   }
 }
 
-
-void init_irc_dissector(struct ndpi_detection_module_struct *ndpi_struct, u_int32_t *id, NDPI_PROTOCOL_BITMASK *detection_bitmask)
+void init_irc_dissector(struct ndpi_detection_module_struct *ndpi_struct,
+			u_int32_t *id, NDPI_PROTOCOL_BITMASK *detection_bitmask)
 {
   ndpi_set_bitmask_protocol_detection("IRC", ndpi_struct, detection_bitmask, *id,
 				      NDPI_PROTOCOL_IRC,
@@ -791,4 +790,3 @@ void init_irc_dissector(struct ndpi_detection_module_struct *ndpi_struct, u_int3
   *id += 1;
 }
 
-#endif

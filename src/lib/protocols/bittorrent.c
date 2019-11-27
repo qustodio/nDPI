@@ -2,7 +2,7 @@
  * bittorrent.c
  *
  * Copyright (C) 2009-2011 by ipoque GmbH
- * Copyright (C) 2011-18 - ntop.org
+ * Copyright (C) 2011-19 - ntop.org
  *
  * This file is part of nDPI, an open source deep packet inspection
  * library based on the OpenDPI and PACE technology by ipoque GmbH
@@ -24,8 +24,6 @@
 
 
 #include "ndpi_protocol_ids.h"
-
-#ifdef NDPI_PROTOCOL_BITTORRENT
 
 #define NDPI_CURRENT_PROTO NDPI_PROTOCOL_BITTORRENT
 
@@ -57,7 +55,8 @@ static u_int8_t is_utp_pkt(const u_int8_t *payload, u_int payload_len) {
   return(1);
 }
 
-static void ndpi_add_connection_as_bittorrent(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow,
+static void ndpi_add_connection_as_bittorrent(struct ndpi_detection_module_struct *ndpi_struct,
+					      struct ndpi_flow_struct *flow,
 					      int bt_offset, int check_hash,
 					      const u_int8_t save_detection, const u_int8_t encrypted_connection)
 {
@@ -73,7 +72,9 @@ static void ndpi_add_connection_as_bittorrent(struct ndpi_detection_module_struc
     } else
       bt_hash = (const char*)&flow->packet.payload[28];
 
-    if(bt_hash) memcpy(flow->protos.bittorrent.hash, bt_hash, 20);
+    if(!ndpi_struct->disable_metadata_export) {
+      if(bt_hash) memcpy(flow->protos.bittorrent.hash, bt_hash, 20);
+    }
   }
 
   ndpi_int_change_protocol(ndpi_struct, flow, NDPI_PROTOCOL_BITTORRENT, NDPI_PROTOCOL_UNKNOWN);
@@ -375,19 +376,32 @@ static void ndpi_int_search_bittorrent_tcp(struct ndpi_detection_module_struct *
   return;
 }
 
+static u_int8_t is_port(u_int16_t a, u_int16_t b, u_int16_t what) {
+  return(((what == a) || (what == b)) ? 1 : 0);
+}
+  
 void ndpi_search_bittorrent(struct ndpi_detection_module_struct *ndpi_struct, struct ndpi_flow_struct *flow)
 {
   struct ndpi_packet_struct *packet = &flow->packet;
   char *bt_proto = NULL;
 
   /* This is broadcast */
-  if(packet->iph
-     && (((packet->iph->saddr == 0xFFFFFFFF) || (packet->iph->daddr == 0xFFFFFFFF))
-	 || (packet->udp
-	     && ((ntohs(packet->udp->source) == 3544) /* teredo.c */
-		 || (ntohs(packet->udp->dest) == 3544))))) {
-    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
-    return;
+  if(packet->iph) {
+
+    if((packet->iph->saddr == 0xFFFFFFFF) || (packet->iph->daddr == 0xFFFFFFFF))
+      goto exclude_bt;
+
+    
+    if(packet->udp) {
+      u_int16_t sport = ntohs(packet->udp->source), dport = ntohs(packet->udp->dest);
+
+      if(is_port(sport, dport, 3544) /* teredo */
+	 || is_port(sport, dport, 5246) || is_port(sport, dport, 5247)/* CAPWAP */) {
+      exclude_bt:
+	NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
+	return;
+      }
+    }
   }
 
   if(packet->detected_protocol_stack[0] != NDPI_PROTOCOL_BITTORRENT) {
@@ -396,8 +410,8 @@ void ndpi_search_bittorrent(struct ndpi_detection_module_struct *ndpi_struct, st
     if((packet->tcp != NULL)
 	&& (packet->tcp_retransmission == 0 || packet->num_retried_bytes)) {
       ndpi_int_search_bittorrent_tcp(ndpi_struct, flow);
-    }
-    else if(packet->udp != NULL) {
+    } else if(packet->udp != NULL) {
+      /* UDP */
       char *bt_search = "BT-SEARCH * HTTP/1.1\r\n";
 
       if((ntohs(packet->udp->source) < 1024)
@@ -500,5 +514,3 @@ void init_bittorrent_dissector(struct ndpi_detection_module_struct *ndpi_struct,
 				      ADD_TO_DETECTION_BITMASK);
   *id += 1;
 }
-
-#endif

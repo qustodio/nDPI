@@ -2,7 +2,7 @@
  * gnutella.c
  *
  * Copyright (C) 2009-2011 by ipoque GmbH
- * Copyright (C) 2011-15 - ntop.org
+ * Copyright (C) 2011-19 - ntop.org
  *
  * This file is part of nDPI, an open source deep packet inspection
  * library based on the OpenDPI and PACE technology by ipoque GmbH
@@ -23,8 +23,6 @@
  */
 
 #include "ndpi_protocol_ids.h"
-
-#ifdef NDPI_PROTOCOL_GNUTELLA
 
 #define NDPI_CURRENT_PROTO NDPI_PROTOCOL_GNUTELLA
 
@@ -70,7 +68,6 @@ void ndpi_search_gnutella(struct ndpi_detection_module_struct *ndpi_struct, stru
 	
   struct ndpi_id_struct *src = flow->src;
   struct ndpi_id_struct *dst = flow->dst;
-
   u_int16_t c;
 
   NDPI_LOG_DBG(ndpi_struct, "search GNUTELLA\n");
@@ -371,5 +368,3 @@ void init_gnutella_dissector(struct ndpi_detection_module_struct *ndpi_struct, u
   *id += 1;
 }
 
-
-#endif

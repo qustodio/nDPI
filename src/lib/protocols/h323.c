@@ -1,15 +1,12 @@
 /*
  * h323.c
  *
- * Copyright (C) 2015 ntop.org
+ * Copyright (C) 2015-18 ntop.org
  * Copyright (C) 2013 Remy Mudingay <mudingay@ill.fr>
  *
  */
 
-
 #include "ndpi_protocol_ids.h"
-
-#ifdef NDPI_PROTOCOL_H323
 
 #define NDPI_CURRENT_PROTO NDPI_PROTOCOL_H323
 
@@ -34,8 +31,7 @@ void ndpi_search_h323(struct ndpi_detection_module_struct *ndpi_struct, struct n
     /* H323  */
     if(packet->payload_packet_len >= 3
        && (packet->payload[0] == 0x03)
-       && (packet->payload[1] == 0x00)
-       && (packet->payload[2] == 0x00)) {
+       && (packet->payload[1] == 0x00)) {
 	struct tpkt *t = (struct tpkt*)packet->payload;
 	u_int16_t len = ntohs(t->len);
 
@@ -115,5 +111,3 @@ void init_h323_dissector(struct ndpi_detection_module_struct *ndpi_struct, u_int
 
   *id += 1;
 }
-
-#endif
